@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+data/raw/
+*.mp4
+*.avi
+*.mov
+
+models/*.h5
+models/*.keras
+models/*.pt
+models/*.pth
+
+.DS_Store

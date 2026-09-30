@@ -34,7 +34,7 @@ Buzzer       LED
 └─────────────┘
 ```
 
-## Status
+### Status
 
 **Current Status:** Planned
 

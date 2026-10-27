@@ -1,0 +1,331 @@
+Yes. Let's do it **step by step from the physical Raspberry Pi 5**, so you can build the same circuit on your breadboard.
+
+## 1. Components
+
+You need:
+
+- Raspberry Pi 5
+- Raspberry Pi Camera Module 3 Wide
+- Breadboard
+- Red LED
+- Green LED
+- 2 × 220 Ω resistors
+- 5 V active buzzer
+- Push button
+- Jumper wires
+- USB-C power supply/power bank
+
+For the buzzer, I recommend adding a **small NPN transistor** (such as 2N2222) rather than driving the buzzer directly from the GPIO.
+
+---
+
+# 2. Raspberry Pi 5 pins
+
+The important physical pins are:
+
+| Physical pin | Function | Use                   |
+| ------------ | -------- | --------------------- |
+| Pin 1        | 3.3 V    | Optional sensor power |
+| Pin 2        | 5 V      | Buzzer power          |
+| Pin 6        | GND      | Ground                |
+| Pin 13       | GPIO27   | Buzzer control        |
+| Pin 22       | GPIO25   | Red LED               |
+| Pin 36       | GPIO16   | Push button           |
+
+**Correction from the earlier diagram:** physical pin **36 is GPIO16**, not GPIO33. So let's use GPIO16 for the button.
+
+---
+
+# 3. Connect the breadboard GND
+
+First create your common ground.
+
+### Wire 1
+
+```text
+Raspberry Pi physical pin 6 (GND)
+              ↓
+       Breadboard (-) rail
+```
+
+Use a **black jumper wire**.
+
+Now the entire black/negative rail is GND.
+
+---
+
+# 4. Connect the GREEN LED
+
+The green LED means:
+
+> **System normal / driver alert**
+
+### Step 1
+
+Put the green LED into the breadboard.
+
+The LED has:
+
+- Long leg = **Anode (+)**
+- Short leg = **Cathode (-)**
+
+### Step 2
+
+Connect:
+
+```text
+Pi GPIO26
+Physical pin 37
+       ↓
+    220 Ω resistor
+       ↓
+Green LED long leg (+)
+```
+
+### Step 3
+
+Connect the green LED short leg:
+
+```text
+Green LED short leg (-)
+          ↓
+         GND
+```
+
+So:
+
+```text
+GPIO26 → 220Ω → Green LED → GND
+```
+
+---
+
+# 5. Connect the RED LED
+
+The red LED means:
+
+> **Drowsiness/distraction warning**
+
+Put the red LED on the breadboard.
+
+### Step 1
+
+Connect:
+
+```text
+Pi GPIO25
+Physical pin 22
+       ↓
+    220 Ω resistor
+       ↓
+Red LED long leg (+)
+```
+
+### Step 2
+
+Connect the short leg:
+
+```text
+Red LED short leg (-)
+         ↓
+        GND
+```
+
+So:
+
+```text
+GPIO25 → 220Ω → Red LED → GND
+```
+
+---
+
+# 6. Connect the push button
+
+We'll use the button to manually test the warning.
+
+Use:
+
+```text
+GPIO16
+Physical pin 36
+```
+
+### Connection
+
+```text
+Pi GPIO16 ───── Push Button ───── GND
+```
+
+No external resistor is required because we'll enable the Raspberry Pi's **internal pull-up resistor** in software.
+
+When the button is:
+
+- Not pressed → GPIO16 = HIGH
+- Pressed → GPIO16 = LOW
+
+---
+
+# 7. Connect the buzzer safely
+
+This part is important.
+
+**Don't connect a 5 V buzzer directly between 5 V and a Raspberry Pi GPIO.**
+
+Use an NPN transistor.
+
+### Transistor connections
+
+For a typical **2N2222**:
+
+```text
+                 +5V
+                  │
+                  │
+              Buzzer (+)
+              Buzzer (-)
+                  │
+                  │
+             Collector
+                2N2222
+             Emitter
+                  │
+                 GND
+```
+
+Then:
+
+```text
+Pi GPIO27
+Physical pin 13
+       │
+      1kΩ
+       │
+     Base
+   2N2222
+```
+
+So the complete circuit is:
+
+```text
+GPIO27
+  │
+  1kΩ
+  │
+Base ── 2N2222
+          │
+          ├── Collector ── Buzzer (-)
+          │
+          └── Emitter ─── GND
+
+5V ─────────────── Buzzer (+)
+```
+
+This lets the Raspberry Pi control the 5 V buzzer without putting the buzzer current directly through the GPIO.
+
+---
+
+# 8. Connect the camera
+
+The **Camera Module 3 Wide does NOT connect to the breadboard**.
+
+It connects directly to the Raspberry Pi 5 camera connector.
+
+```text
+Camera Module 3 Wide
+        │
+        │ CSI ribbon cable
+        ↓
+   Raspberry Pi 5
+```
+
+Make sure the ribbon cable is inserted in the correct orientation according to the Pi 5/camera connector markings.
+
+---
+
+# 9. Power
+
+Your power bank connects to the Raspberry Pi 5 through:
+
+```text
+USB-C
+  ↓
+Raspberry Pi 5
+```
+
+The Pi then provides the GPIO signals.
+
+For the buzzer, you can use the Pi's **5 V rail** if your particular buzzer's current is suitable for your power setup.
+
+---
+
+# 10. Complete connection table
+
+| Component      | Connection                         |
+| -------------- | ---------------------------------- |
+| Green LED +    | GPIO26 / physical 37 through 220 Ω |
+| Green LED −    | GND                                |
+| Red LED +      | GPIO25 / physical 22 through 220 Ω |
+| Red LED −      | GND                                |
+| Button         | GPIO16 / physical 36 ↔ GND         |
+| Buzzer +       | 5 V                                |
+| Buzzer −       | 2N2222 collector                   |
+| 2N2222 emitter | GND                                |
+| 2N2222 base    | GPIO27 / physical 13 through 1 kΩ  |
+| Pi GND         | Breadboard GND rail                |
+| Camera         | Pi 5 CSI connector                 |
+| Pi power       | USB-C                              |
+
+---
+
+# 11. Final physical structure
+
+Your breadboard should essentially have:
+
+```text
+                 RASPBERRY PI 5
+              ┌─────────────────┐
+              │                 │
+ GPIO26 ──────┤── Green LED     │
+ GPIO25 ──────┤── Red LED       │
+ GPIO27 ──────┤── Buzzer driver │
+ GPIO16 ──────┤── Push button   │
+ GND ─────────┤── GND rail      │
+              └─────────────────┘
+                       │
+                       │
+              ┌────────┴─────────┐
+              │    BREADBOARD    │
+              │                  │
+              │ 🟢 Green LED     │
+              │ 🔴 Red LED       │
+              │ 🔊 Buzzer        │
+              │ ⏺ Push Button   │
+              │                  │
+              └──────────────────┘
+
+       Camera Module 3 Wide
+                │
+                │ CSI
+                ↓
+          Raspberry Pi 5
+```
+
+### One thing I'd change for your actual Capstone
+
+Don't connect everything at once. Test in this order:
+
+**1. Pi 5 → Green LED**
+↓
+**2. Pi 5 → Red LED**
+↓
+**3. Push button**
+↓
+**4. Buzzer + transistor**
+↓
+**5. Camera Module 3 Wide**
+↓
+**6. AI drowsiness detection**
+↓
+**7. Connect AI result → warning circuit**
+
+That way, if something doesn't work, you'll immediately know which part caused the problem.

@@ -7,6 +7,30 @@ import numpy as np
 import requests
 import mediapipe as mp
 
+import math
+def distance(point1, point2):
+    """Calculate the Euclidean distance between two points."""
+    return float(math.hypot(
+        point2[0] - point1[0],
+        point2[1] - point1[1]
+    ))
+
+
+def aspect_ratio(points):
+    """Calculate an eye aspect ratio from six landmark points."""
+    if len(points) != 6:
+        raise ValueError("aspect_ratio requires exactly 6 points")
+
+    vertical1 = distance(points[1], points[5])
+    vertical2 = distance(points[2], points[4])
+    horizontal = distance(points[0], points[3])
+
+    if horizontal == 0:
+        return 0.0
+
+    return (vertical1 + vertical2) / (2.0 * horizontal)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Portable AI Driver Drowsiness and Distraction Detection System")
     parser.add_argument("--camera", type=str, default="http://192.168.137.69:4747/video", help="Camera index or network stream URL")

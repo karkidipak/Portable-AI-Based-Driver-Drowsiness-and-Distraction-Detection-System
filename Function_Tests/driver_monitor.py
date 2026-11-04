@@ -1,7 +1,10 @@
-
 import os
 import time
 import math
+import argparse
+import threading
+from pathlib import Path
+
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -11,9 +14,11 @@ from ultralytics import YOLO
 # AUTONOMOUS - PORTABLE AI DRIVER MONITORING SYSTEM
 # =========================================================
 
-CAMERA_INDEX = 0
-FACE_MODEL_PATH = "face_landmarker.task"
-YOLO_MODEL_PATH = "yolo11n.pt"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FACE_MODEL_PATH = PROJECT_ROOT / "Function_Tests" / "face_landmarker.task"
+YOLO_MODEL_PATH = PROJECT_ROOT / "yolo11n.pt"
+#DEFAULT_CAMERA = "http://192.168.137.2:4747/video"
+DEFAULT_CAMERA = 0
 
 FRAME_WIDTH = 960
 FRAME_HEIGHT = 540
@@ -31,11 +36,12 @@ PHONE_CONFIDENCE = 0.35
 PHONE_CLASS_ID = 67
 PHONE_EVERY_N_FRAMES = 4
 
-CYAN = (0, 255, 220)
-MESH_COLOR = (180, 150, 20)
-WHITE = (245, 245, 245)
+#CYAN = (0, 255, 220)
+# Change to a bright vibrant green
 GREEN = (70, 220, 100)
-YELLOW = (0, 220, 255)
+MESH_COLOR = (50, 225, 50)
+WHITE = (245, 245, 245)
+#YELLOW = (0, 220, 255)
 RED = (40, 40, 255)
 DARK = (18, 24, 28)
 
@@ -75,70 +81,52 @@ def put_text(frame, text, position, color=WHITE,
 # DENSE TRIANGULAR FACE MESH
 # ---------------------------------------------------------
 
+# ---------------------------------------------------------
+# GEOMETRIC KEYPOINT FACE MESH (HUD STYLE)
+# ---------------------------------------------------------
+
 def draw_face_mesh(frame, points):
     """
-    Draw a dense cyan triangular mesh from facial landmarks.
-    Delaunay triangulation is an approximation of the reference image.
+    Draw a clean geometric wireframe connecting key facial landmarks
+    matching the reference HUD style.
     """
-    height, width = frame.shape[:2]
-
-    if len(points) < 20:
+    if len(points) < 468:
         return
 
-    subdiv = cv2.Subdiv2D((0, 0, width, height))
-    valid_points = []
-    seen = set()
+    # Draw specific geometric connective lines resembling the HUD wireframe
+    connections = [
+        # Brow / Forehead outline
+        (10, 338), (338, 297), (297, 332), (332, 284), (284, 251), (251, 389),
+        (10, 109), (109, 67), (67, 103), (103, 54), (54, 21), (21, 162),
+        # Eye connections to nose bridge
+        (33, 133), (33, 168), (133, 168), (168, 6), (6, 1),
+        (362, 263), (263, 168), (362, 168),
+        # Nose to mouth
+        (1, 2), (2, 98), (98, 327), (1, 4), (4, 5),
+        (61, 146), (146, 91), (91, 181), (181, 84), (84, 17), (17, 314),
+        (291, 375), (375, 321), (321, 405), (405, 314),
+        # Jawline connections from cheeks
+        (234, 127), (127, 162), (234, 93), (93, 132), (132, 58), (58, 172), (172, 152),
+        (454, 356), (356, 389), (454, 323), (323, 361), (361, 288), (288, 397), (397, 152),
+        # Cross facial mesh lines
+        (33, 61), (263, 291), (133, 61), (362, 291), (1, 61), (1, 291)
+    ]
 
-    for x, y in points:
-        x = int(np.clip(x, 1, width - 2))
-        y = int(np.clip(y, 1, height - 2))
+    for start_idx, end_idx in connections:
+        if start_idx < len(points) and end_idx < len(points):
+            cv2.line(frame, points[start_idx], points[end_idx], MESH_COLOR, 1, cv2.LINE_AA)
 
-        if (x, y) in seen:
-            continue
-
-        seen.add((x, y))
-        valid_points.append((x, y))
-
-    for point in valid_points:
-        try:
-            subdiv.insert(point)
-        except cv2.error:
-            pass
-
-    # Draw triangulation lines.
-    for triangle in subdiv.getTriangleList():
-        vertices = [
-            (int(triangle[0]), int(triangle[1])),
-            (int(triangle[2]), int(triangle[3])),
-            (int(triangle[4]), int(triangle[5]))
-        ]
-
-        if all(
-            0 <= x < width and 0 <= y < height
-            for x, y in vertices
-        ):
-            cv2.line(
-                frame, vertices[0], vertices[1],
-                MESH_COLOR, 1, cv2.LINE_AA
-            )
-            cv2.line(
-                frame, vertices[1], vertices[2],
-                MESH_COLOR, 1, cv2.LINE_AA
-            )
-            cv2.line(
-                frame, vertices[2], vertices[0],
-                MESH_COLOR, 1, cv2.LINE_AA
-            )
-
-    # Draw landmark dots.
-    for x, y in valid_points:
-        cv2.circle(frame, (x, y), 1, CYAN, -1, cv2.LINE_AA)
-
-    # Highlight eye, nose, and mouth landmarks.
-    for index in (33, 133, 263, 362, 1, 13, 14, 61, 291):
-        if index < len(points):
-            cv2.circle(frame, points[index], 2, CYAN, -1)
-
+    # Draw prominent nodes (dots) at key intersections
+    highlight_indices = [
+        10, 168, 6, 1, 4, 
+        33, 133, 362, 263, 
+        61, 291, 13, 14, 
+        234, 454, 152
+    ]
+    
+    for idx in highlight_indices:
+        if idx < len(points):
+            cv2.circle(frame, points[idx], 3, GREEN, -1, cv2.LINE_AA)
 
 # ---------------------------------------------------------
 # HEAD POSE ESTIMATION
@@ -149,17 +137,15 @@ def estimate_head_pose(points, width, height):
     Estimate head rotation using solvePnP.
     Returns approximate yaw and pitch angles in degrees.
     """
-    # Generic 3D face model points.
     model_points = np.array([
-        (0.0, 0.0, 0.0),             # Nose
-        (0.0, -330.0, -65.0),        # Chin
-        (-225.0, 170.0, -135.0),     # Left eye corner
-        (225.0, 170.0, -135.0),      # Right eye corner
-        (-150.0, -150.0, -125.0),    # Left mouth corner
-        (150.0, -150.0, -125.0)      # Right mouth corner
+        (0.0, 0.0, 0.0),            # Nose
+        (0.0, -330.0, -65.0),       # Chin
+        (-225.0, 170.0, -135.0),    # Left eye corner
+        (225.0, 170.0, -135.0),     # Right eye corner
+        (-150.0, -150.0, -125.0),   # Left mouth corner
+        (150.0, -150.0, -125.0)     # Right mouth corner
     ], dtype=np.float64)
 
-    # Matching MediaPipe landmark indices.
     indices = [1, 152, 33, 263, 61, 291]
 
     image_points = np.array(
@@ -190,8 +176,6 @@ def estimate_head_pose(points, width, height):
             return None, None
 
         rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
-
-        # Euler angles from the rotation matrix.
         angles, _, _, _, _, _ = cv2.RQDecomp3x3(rotation_matrix)
 
         pitch = float(angles[0])
@@ -216,7 +200,7 @@ def draw_dashboard(frame, statuses, alerts):
 
     put_text(
         frame, "AUTONOMOUS // MACHINE VISION",
-        (22, 35), CYAN, 0.55, 2
+        (22, 35), GREEN, 0.55, 2
     )
     put_text(
         frame, "DRIVER MONITORING - PROTOTYPE",
@@ -246,29 +230,93 @@ def draw_dashboard(frame, statuses, alerts):
 # CAMERA SETUP
 # ---------------------------------------------------------
 
-def open_camera(index):
+class StreamWrapper:
+    """Reader for the iOS DroidCam MJPEG HTTP stream using OpenCV VideoCapture."""
+
+    def __init__(self, url):
+        self.url = url
+        self.cap = None
+        self.is_open = False
+
+        try:
+            log(f"[INFO] Connecting to iOS DroidCam stream: {self.url}")
+            
+            # Force FFmpeg backend to use TCP transport for stability over local HTTP streams
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            self.cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+            
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(self.url)
+
+            if self.cap.isOpened():
+                self.is_open = True
+                log("[INFO] DroidCam stream connected.")
+            else:
+                log("[ERROR] OpenCV could not open the DroidCam URL stream.")
+        except Exception as exc:
+            log(f"[ERROR] Could not connect to DroidCam: {exc}")
+            self.is_open = False
+
+    def isOpened(self):
+        return self.is_open and self.cap is not None and self.cap.isOpened()
+
+    def read(self):
+        if not self.isOpened():
+            return False, None
+        return self.cap.read()
+
+    def release(self):
+        self.is_open = False
+        if self.cap is not None:
+            self.cap.release()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Portable AI driver drowsiness and distraction monitor"
+    )
+    parser.add_argument(
+        "--camera",
+        default=DEFAULT_CAMERA,
+        help="Camera index (0, 1, ...) or DroidCam HTTP stream URL"
+    )
+    parser.add_argument(
+        "--no-phone",
+        action="store_true",
+        help="Disable YOLO phone detection"
+    )
+    return parser.parse_args()
+
+
+def open_camera(source):
+    if isinstance(source, str) and source.lower().startswith(("http://", "https://")):
+        stream = StreamWrapper(source)
+        return stream if stream.isOpened() else None
+
+    try:
+        camera_index = int(source)
+    except (TypeError, ValueError):
+        camera_index = source
+
     backends = [
-        ("DirectShow", cv2.CAP_DSHOW),
+        ("FFmpeg", cv2.CAP_FFMPEG),
         ("Media Foundation", cv2.CAP_MSMF),
+        ("DirectShow", cv2.CAP_DSHOW),
         ("Default", None)
     ]
 
     for name, backend in backends:
-        log(f"[INFO] Trying camera {index} with {name}...")
-
+        log(f"[INFO] Trying camera {camera_index} with {name}...")
         camera = None
-
         try:
-            if backend is None:
-                camera = cv2.VideoCapture(index)
-            else:
-                camera = cv2.VideoCapture(index, backend)
-
+            camera = (
+                cv2.VideoCapture(camera_index)
+                if backend is None
+                else cv2.VideoCapture(camera_index, backend)
+            )
             if camera.isOpened():
-                log(f"[INFO] Camera device opened using {name}.")
-                # Do not force resolution or buffer-size changes.
+                log(f"[INFO] Camera opened using {name}.")
                 return camera
-
         except cv2.error as exc:
             log(f"[WARNING] Camera backend error: {exc}")
 
@@ -283,17 +331,26 @@ def open_camera(index):
 # ---------------------------------------------------------
 
 def main():
-    if not os.path.isfile(FACE_MODEL_PATH):
+    args = parse_args()
+
+    if not FACE_MODEL_PATH.is_file():
         raise FileNotFoundError(
-            f"Cannot find {FACE_MODEL_PATH} in the project folder."
+            f"Cannot find the MediaPipe model: {FACE_MODEL_PATH}"
         )
 
+    if not args.no_phone and not YOLO_MODEL_PATH.is_file():
+        raise FileNotFoundError(
+            f"Cannot find the YOLO model: {YOLO_MODEL_PATH}. "
+            "Use --no-phone to run without phone detection."
+        )
+
+    log(f"[INFO] Python MediaPipe version: {mp.__version__}")
     log("[INFO] Loading MediaPipe Face Landmarker...")
 
     vision = mp.tasks.vision
     face_options = vision.FaceLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(
-            model_asset_path=FACE_MODEL_PATH
+            model_asset_path=str(FACE_MODEL_PATH)
         ),
         running_mode=vision.RunningMode.VIDEO,
         num_faces=1,
@@ -309,12 +366,16 @@ def main():
     camera = None
 
     try:
-        log("[INFO] Loading YOLO phone detector...")
-        phone_model = YOLO(YOLO_MODEL_PATH)
-        log("[INFO] Models loaded.")
+        phone_model = None
+        if not args.no_phone:
+            log("[INFO] Loading YOLO phone detector...")
+            phone_model = YOLO(str(YOLO_MODEL_PATH))
+            log("[INFO] YOLO phone detector loaded.")
+        else:
+            log("[INFO] Phone detection disabled by --no-phone.")
 
-        log("[INFO] Opening camera now...")
-        camera = open_camera(CAMERA_INDEX)
+        log(f"[INFO] Opening camera: {args.camera}")
+        camera = open_camera(args.camera)
 
         if camera is None:
             raise RuntimeError(
@@ -329,7 +390,6 @@ def main():
         last_timestamp = -1
         frame_count = 0
 
-        # Calibration starts when a face is first detected.
         calibration_start = None
         calibration_samples = []
         neutral_yaw = None
@@ -348,10 +408,6 @@ def main():
                 ok, raw_frame = camera.read()
             except cv2.error as exc:
                 log(f"[ERROR] Camera frame read failed: {exc}")
-                log(
-                    "[INFO] Close other camera apps, restart DroidCam, "
-                    "and run the program again."
-                )
                 break
 
             if not ok or raw_frame is None:
@@ -369,7 +425,6 @@ def main():
                 log(f"[ERROR] Could not resize camera frame: {exc}")
                 break
 
-            # Mirror the view like a webcam preview.
             frame = cv2.flip(frame, 1)
 
             height, width = frame.shape[:2]
@@ -410,15 +465,13 @@ def main():
                     for p in face
                 ]
 
-                # Dense triangular mesh similar to the reference.
                 draw_face_mesh(frame, points)
 
                 put_text(
                     frame, "FACE TRACKED",
-                    (18, height - 68), CYAN, 0.48
+                    (18, height - 68), GREEN, 0.48
                 )
 
-                # Eye opening estimates.
                 left_eye = opening_ratio(
                     points, (33, 133),
                     ((160, 144), (158, 153))
@@ -444,7 +497,6 @@ def main():
                     eyes_closed_start = None
                     eye_status = f"OPEN {eye_ratio:.2f}"
 
-                # Mouth opening estimate; not a confirmed yawn classifier.
                 mouth_ratio = opening_ratio(
                     points, (61, 291),
                     ((13, 14), (82, 87))
@@ -463,7 +515,6 @@ def main():
                     mouth_open_start = None
                     mouth_status = f"NORMAL {mouth_ratio:.2f}"
 
-                # Estimate head rotation.
                 yaw, pitch = estimate_head_pose(
                     points, width, height
                 )
@@ -522,7 +573,7 @@ def main():
             else:
                 put_text(
                     frame, "NO FACE DETECTED",
-                    (20, 220), YELLOW, 0.7, 2
+                    (20, 220), GREEN, 0.7, 2
                 )
                 eyes_closed_start = None
                 mouth_open_start = None
@@ -533,8 +584,9 @@ def main():
                 neutral_yaw = None
                 neutral_pitch = None
 
-            # Run YOLO phone detection every few frames.
-            if frame_count % PHONE_EVERY_N_FRAMES == 0 or frame_count == 1:
+            if phone_model is not None and (
+                frame_count % PHONE_EVERY_N_FRAMES == 0 or frame_count == 1
+            ):
                 phone_boxes = []
                 phone_detected = False
 
@@ -584,7 +636,7 @@ def main():
                 (
                     "FACE",
                     "TRACKED" if found_face else "NOT FOUND",
-                    GREEN if found_face else YELLOW
+                    GREEN if found_face else RED
                 ),
                 (
                     "EYES",
@@ -594,17 +646,18 @@ def main():
                 (
                     "MOUTH",
                     mouth_status,
-                    YELLOW if "OPEN" in mouth_status else GREEN
+                    RED if "OPEN" in mouth_status else GREEN
                 ),
                 (
                     "HEAD",
                     head_status,
-                    YELLOW if "AWAY" in head_status else GREEN
+                    RED if "AWAY" in head_status else GREEN
                 ),
                 (
                     "PHONE",
-                    "DETECTED" if phone_detected else "NOT DETECTED",
-                    RED if phone_detected else GREEN
+                    ("DISABLED" if phone_model is None else
+                     ("DETECTED" if phone_detected else "NOT DETECTED")),
+                    RED if phone_model is None else (RED if phone_detected else GREEN)
                 )
             ]
 
